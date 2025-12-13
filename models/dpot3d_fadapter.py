@@ -162,8 +162,8 @@ class AFNO3DAdapter(nn.Module):
         # [Experiment] Force high frequency bands (last 2 bands if num_bands=4) to 0 dimension
         # This makes the adapters for these bands identity mappings with 0 parameters
         if num_bands == 4:
-            print(f"[Experiment Info] Forcing high frequency bands (indices 3) to have 0 dimension/parameters.")
-            # self.band_dims[2] = 0
+            print(f"[Experiment Info] Forcing high frequency bands (indices 2,3) to have 0 dimension/parameters.")
+            self.band_dims[2] = 0
             self.band_dims[3] = 0
 
         # Create Adapter with corresponding dimension for each band and block
@@ -390,7 +390,9 @@ class PatchEmbedAdapter(nn.Module):
 class BlockAdapter(nn.Module):
     def __init__(self, mixing_type='afno', double_skip=True, width=32, n_blocks=4, mlp_ratio=1., 
                  channel_first=True, modes=32, drop=0., drop_path=0., act='gelu', h=14, w=8,
-                 adapter_dim=32, adapter_scale=1.0, power=2.0, num_bands=4, min_dim_factor=0.5, max_dim_factor=2.0):
+                 adapter_dim=32, adapter_scale=1.0, power=2.0, num_bands=4, min_dim_factor=0.5, max_dim_factor=2.0,
+                 use_spatial_hf_block=False, hf_mode='diff', hf_stride=2, hf_kernel_size=3, hf_gate_init=0.05,
+                 hf_upsample='trilinear', hf_down_type='avg', hf_use_norm=True, hf_soft_shrink_tau=0.0):
         super().__init__()
         self.norm1 = torch.nn.GroupNorm(8, width)
         self.width = width
@@ -440,6 +442,55 @@ class BlockAdapter(nn.Module):
         self._init_adapter_weights()
 
         self.double_skip = double_skip
+        self.use_spatial_hf_block = use_spatial_hf_block
+        self.hf_mode = hf_mode
+        self.hf_stride = hf_stride
+        self.hf_kernel_size = hf_kernel_size
+        self.hf_upsample = hf_upsample
+        self.hf_down_type = hf_down_type
+        self.hf_use_norm = hf_use_norm
+        self.hf_soft_shrink_tau = hf_soft_shrink_tau
+        self.hf_gate = nn.Parameter(torch.ones(1, width, 1, 1, 1) * hf_gate_init)
+        if self.use_spatial_hf_block:
+            if self.hf_down_type == 'avg':
+                self.hf_down = nn.AvgPool3d(kernel_size=self.hf_stride, stride=self.hf_stride)
+            else:
+                pad = self.hf_kernel_size // 2
+                self.hf_down_conv = nn.Conv3d(width, width, kernel_size=self.hf_kernel_size, stride=self.hf_stride, padding=pad, groups=width, bias=False)
+            if self.hf_upsample == 'transpose':
+                self.hf_up_tconv = nn.ConvTranspose3d(width, width, kernel_size=self.hf_stride, stride=self.hf_stride, groups=width, bias=True)
+            self.hf_norm = nn.Identity() if not self.hf_use_norm else torch.nn.GroupNorm(8, width)
+            self.hf_shrink = nn.Identity() if self.hf_soft_shrink_tau <= 0 else nn.Softshrink(self.hf_soft_shrink_tau)
+            if self.hf_mode == 'laplacian':
+                k = 3
+                lap = torch.zeros(width, 1, k, k, k)
+                c = k // 2
+                lap[:, :, c, c, c] = -6.0
+                lap[:, :, c-1, c, c] = 1.0
+                lap[:, :, c+1, c, c] = 1.0
+                lap[:, :, c, c-1, c] = 1.0
+                lap[:, :, c, c+1, c] = 1.0
+                lap[:, :, c, c, c-1] = 1.0
+                lap[:, :, c, c, c+1] = 1.0
+                self.register_buffer('lap_kernel', lap)
+            elif self.hf_mode == 'dog':
+                k = self.hf_kernel_size
+                grid = torch.arange(k, dtype=torch.float)
+                xs, ys, zs = torch.meshgrid(grid, grid, grid)
+                c = (k - 1) / 2.0
+                xs = xs - c
+                ys = ys - c
+                zs = zs - c
+                s1 = k / 3.0
+                s2 = 2 * s1
+                g1 = torch.exp(-(xs**2 + ys**2 + zs**2) / (2 * s1**2))
+                g2 = torch.exp(-(xs**2 + ys**2 + zs**2) / (2 * s2**2))
+                g1 = g1 / g1.sum()
+                g2 = g2 / g2.sum()
+                gauss1 = g1.view(1, 1, k, k, k).repeat(width, 1, 1, 1, 1)
+                gauss2 = g2.view(1, 1, k, k, k).repeat(width, 1, 1, 1, 1)
+                self.register_buffer('gauss1', gauss1)
+                self.register_buffer('gauss2', gauss2)
 
     def _init_adapter_weights(self):
         """Initialize Adapter weights"""
@@ -455,6 +506,34 @@ class BlockAdapter(nn.Module):
 
     def forward(self, x):
         residual = x
+        if self.use_spatial_hf_block:
+            if self.hf_down_type == 'avg':
+                ds = self.hf_down(x)
+            else:
+                ds = self.hf_down_conv(x)
+            if self.hf_upsample == 'trilinear':
+                up = F.interpolate(ds, size=x.shape[-3:], mode='trilinear', align_corners=False)
+            elif self.hf_upsample == 'nearest':
+                up = F.interpolate(ds, size=x.shape[-3:], mode='nearest')
+            else:
+                up = self.hf_up_tconv(ds)
+            if self.hf_mode == 'diff':
+                hf = x - up
+            elif self.hf_mode == 'laplacian':
+                hf = F.conv3d(x, self.lap_kernel, stride=1, padding=1, groups=self.width)
+            elif self.hf_mode == 'dog':
+                k = self.gauss1.shape[-1]
+                p = k // 2
+                b1 = F.conv3d(x, self.gauss1, stride=1, padding=p, groups=self.width)
+                b2 = F.conv3d(x, self.gauss2, stride=1, padding=p, groups=self.width)
+                hf = b1 - b2
+            else:
+                hf = x - up
+            hf = self.hf_shrink(hf)
+            hf = hf * self.hf_gate
+            if self.hf_use_norm:
+                hf = self.hf_norm(hf)
+            x = x + hf
         x = self.norm1(x)
         x = self.filter(x)
 
