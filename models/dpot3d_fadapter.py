@@ -163,7 +163,7 @@ class AFNO3DAdapter(nn.Module):
         # This makes the adapters for these bands identity mappings with 0 parameters
         if num_bands == 4:
             print(f"[Experiment Info] Forcing high frequency bands (indices 3) to have 0 dimension/parameters.")
-            self.band_dims[2] = 0
+            # self.band_dims[2] = 0
             self.band_dims[3] = 0
 
         # Create Adapter with corresponding dimension for each band and block
@@ -481,7 +481,17 @@ class DPOTNet3D(nn.Module):
                  in_timesteps=1, out_timesteps=1, n_blocks=4, embed_dim=768, out_layer_dim=32, depth=12, 
                  modes=32, mlp_ratio=1., n_cls=1, normalize=False, act='gelu', time_agg='exp_mlp',
                  adapter_dim=32, adapter_scale=1.0,
-                 power=2.0, num_bands=4, min_dim_factor=0.5, max_dim_factor=2.0):
+                 power=2.0, num_bands=4, min_dim_factor=0.5, max_dim_factor=2.0,
+                 use_spatial_hf_block=True,  # 是否在Block前启用高频旁路
+                 hf_mode='diff',  # 高频提取模式：diff为下采样差分
+                 hf_stride=2,  # 下采样步幅
+                 hf_kernel_size=3,  # 卷积核尺寸
+                 hf_gate_init=0.05,  # 门控初值
+                 hf_upsample='trilinear',  # 上采样方式
+                 hf_down_type='avg',  # 下采样类型
+                 hf_use_norm=True,  # 旁路是否归一化
+                 hf_soft_shrink_tau=0.0  # 软阈值收缩强度
+                 ):
         super().__init__()
 
         self.in_channels = in_channels
@@ -520,22 +530,31 @@ class DPOTNet3D(nn.Module):
         # Use Block with Adapter
         self.blocks = nn.ModuleList([
             BlockAdapter(
-                mixing_type=mixing_type, 
-                modes=modes,
-                width=embed_dim, 
-                mlp_ratio=mlp_ratio, 
-                channel_first=True, 
-                n_blocks=n_blocks, 
-                double_skip=False, 
-                h=h, 
-                w=w, 
-                act=act,
-                adapter_dim=adapter_dim,
-                adapter_scale=adapter_scale,
-                power=power,
-                num_bands=num_bands,
-                min_dim_factor=min_dim_factor,
-                max_dim_factor=max_dim_factor,
+                mixing_type=mixing_type,  # 频域混合类型
+                modes=modes,  # 空间频率保留数
+                width=embed_dim,  # 通道宽度
+                mlp_ratio=mlp_ratio,  # MLP膨胀比
+                channel_first=True,  # 通道在前的数据格式
+                n_blocks=n_blocks,  # AFNO子块数
+                double_skip=False,  # 双残差开关
+                h=h,  # 高度网格
+                w=w,  # 宽度网格
+                act=act,  # 激活函数
+                adapter_dim=adapter_dim,  # Adapter瓶颈维度
+                adapter_scale=adapter_scale,  # Adapter缩放系数
+                power=power,  # fAdapter维度幂指数
+                num_bands=num_bands,  # 频带数量
+                min_dim_factor=min_dim_factor,  # 最小维度因子
+                max_dim_factor=max_dim_factor,  # 最大维度因子
+                use_spatial_hf_block=use_spatial_hf_block,  # 启用高频旁路
+                hf_mode=hf_mode,  # 高频提取模式
+                hf_stride=hf_stride,  # 下采样步幅
+                hf_kernel_size=hf_kernel_size,  # 卷积核尺寸
+                hf_gate_init=hf_gate_init,  # 门控初值
+                hf_upsample=hf_upsample,  # 上采样方式
+                hf_down_type=hf_down_type,  # 下采样类型
+                hf_use_norm=hf_use_norm,  # 旁路归一化
+                hf_soft_shrink_tau=hf_soft_shrink_tau,  # 软阈值收缩
             ) for i in range(depth)
         ])
 

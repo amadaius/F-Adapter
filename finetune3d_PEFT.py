@@ -191,7 +191,18 @@ parser.add_argument('--num_bands', type=int, default=4,
 parser.add_argument('--min_dim_factor', type=float, default=0.5,
                     help='Minimum dimension factor for fAdapter (relative to peft_dim)')
 parser.add_argument('--max_dim_factor', type=float, default=2.0,
-                    help='Maximum dimension factor for fAdapter (relative to peft_dim)')
+                  help='Maximum dimension factor for fAdapter (relative to peft_dim)')
+
+# Spatial HF bypass parameters（高频旁路参数）
+parser.add_argument('--use_spatial_hf_block', type=int, default=1, help='是否在Block前端启用高频旁路(1启用/0关闭)')
+parser.add_argument('--hf_mode', type=str, default='diff', choices=['diff','laplacian','dog'], help='高频提取模式：diff为下采样差分')
+parser.add_argument('--hf_stride', type=int, default=2, help='下采样步幅')
+parser.add_argument('--hf_kernel_size', type=int, default=3, help='卷积核尺寸')
+parser.add_argument('--hf_gate_init', type=float, default=0.05, help='门控初值')
+parser.add_argument('--hf_upsample', type=str, default='trilinear', choices=['trilinear','nearest','transpose'], help='上采样方式')
+parser.add_argument('--hf_down_type', type=str, default='avg', choices=['avg','conv'], help='下采样类型')
+parser.add_argument('--hf_use_norm', type=int, default=1, help='旁路是否使用归一化(1是/0否)')
+parser.add_argument('--hf_soft_shrink_tau', type=float, default=0.0, help='软阈值收缩强度(0表示关闭)')
 
 # --- Step 2b: Remove FourierKAN specific arguments ---
 # parser.add_argument('--fourierkan_gridsize', ...) # 
@@ -598,12 +609,16 @@ elif args.model == 'DPOT':
         elif adapter_type == 'fadapter':
             print(f"Using DPOT with fAdapter fine-tuning (base_dim={args.peft_dim}, scale={args.peft_scale}, power={args.power}, bands={args.num_bands})")
             model = DPOTNet3D_fAdapter(
-                img_size=args.res, patch_size=args.patch_size, in_channels=train_dataset.n_channels,
-                in_timesteps=args.T_in, out_timesteps=args.T_bundle, out_channels=train_dataset.n_channels,
-                normalize=args.normalize, embed_dim=args.width, modes=args.modes, depth=args.n_layers,
-                n_blocks=args.n_blocks, mlp_ratio=args.mlp_ratio, act=args.act, n_cls=args.n_class,
-                adapter_dim=args.peft_dim, adapter_scale=args.peft_scale, power=args.power,
-                num_bands=args.num_bands, min_dim_factor=args.min_dim_factor, max_dim_factor=args.max_dim_factor
+                img_size=args.res, patch_size=args.patch_size, in_channels=train_dataset.n_channels,  # 基础尺寸与通道设置
+                in_timesteps=args.T_in, out_timesteps=args.T_bundle, out_channels=train_dataset.n_channels,  # 时间步与输出
+                normalize=args.normalize, embed_dim=args.width, modes=args.modes, depth=args.n_layers,  # 主干配置
+                n_blocks=args.n_blocks, mlp_ratio=args.mlp_ratio, act=args.act, n_cls=args.n_class,  # Block与MLP配置
+                adapter_dim=args.peft_dim, adapter_scale=args.peft_scale, power=args.power,  # Adapter与fAdapter参数
+                num_bands=args.num_bands, min_dim_factor=args.min_dim_factor, max_dim_factor=args.max_dim_factor,  # 频带参数
+                use_spatial_hf_block=bool(args.use_spatial_hf_block),  # 是否启用高频旁路
+                hf_mode=args.hf_mode, hf_stride=args.hf_stride, hf_kernel_size=args.hf_kernel_size,  # 高频提取与尺度
+                hf_gate_init=args.hf_gate_init, hf_upsample=args.hf_upsample, hf_down_type=args.hf_down_type,  # 门控与采样方式
+                hf_use_norm=bool(args.hf_use_norm), hf_soft_shrink_tau=args.hf_soft_shrink_tau  # 归一化与软阈值
             ).to(device)
         # --- Step 3: Instantiate FourierKAN Adapter Model (remove specific args) ---
         elif adapter_type == 'fourierkan':
@@ -734,7 +749,9 @@ def load_peft_weights_from_checkpoint(model, state_dict, peft_method='lora'):
         if adapter_type == 'chebykan':
             peft_keywords = ['adapter', 'cheby']
         elif adapter_type == 'fadapter':
-             peft_keywords = ['adapter', 'adapters_in', 'adapters_mid', 'adapters_out', 'band']
+             # fAdapter + 高频旁路关键词：适配器与旁路权重一并加载
+             peft_keywords = ['adapter', 'adapters_in', 'adapters_mid', 'adapters_out', 'band',
+                              'hf_', 'hf_gate', 'hf_proj', 'hf_norm', 'hf_conv', 'hf_down', 'hf_up']
         elif adapter_type == 'fourierkan':
              peft_keywords = ['adapter', 'fourier', 'kan', 'coeff'] # Keywords for FourierKAN
         else: # original adapter
@@ -1305,8 +1322,10 @@ for ep in tqdm(range(args.epochs), desc="Training"):
                 peft_state_dict = {k: v for k, v in model.state_dict().items() 
                                   if 'adapter' in k or 'cheby' in k.lower()}
             elif args.adapter_type == 'fadapter':
+                # 轻量保存：仅保存fAdapter与高频旁路的参数子集（减少体积，便于迁移）
                 peft_state_dict = {k: v for k, v in model.state_dict().items() 
-                                  if 'adapter' in k or 'adapters_in' in k.lower() or 'adapters_mid' in k.lower() or 'adapters_out' in k.lower() or 'band' in k.lower()}
+                                  if ('adapter' in k) or ('adapters_in' in k.lower()) or ('adapters_mid' in k.lower()) or ('adapters_out' in k.lower()) or ('band' in k.lower())
+                                     or ('hf_' in k.lower()) or ('hf_gate' in k.lower()) or ('hf_proj' in k.lower()) or ('hf_norm' in k.lower()) or ('hf_conv' in k.lower()) or ('hf_down' in k.lower()) or ('hf_up' in k.lower())}
             elif args.adapter_type == 'fourierkan':
                 peft_state_dict = {k: v for k, v in model.state_dict().items() 
                                   if 'adapter' in k or 'fourier' in k.lower() or 'kan' in k.lower() or 'coeff' in k.lower()}
