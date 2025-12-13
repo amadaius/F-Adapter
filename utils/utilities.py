@@ -89,7 +89,24 @@ def timing(func):
 def count_parameters(model):
     total_params = 0
     for name, parameter in model.named_parameters():
-        if not parameter.requires_grad: continue
+        if not parameter.requires_grad:
+            continue
+        skip = False
+        if 'blocks.' in name and '.filter.' in name and ('.adapters_in.' in name or '.adapters_mid.' in name or '.adapters_out.' in name):
+            parts = name.split('.')
+            try:
+                bi = parts.index('blocks') + 1
+                fi = parts.index('filter')
+                ai = fi + 1
+                band_idx = int(parts[ai + 2])
+                block_idx = int(parts[bi])
+                f = model.blocks[block_idx].filter
+                if hasattr(f, 'band_dims') and band_idx < len(f.band_dims) and f.band_dims[band_idx] == 0:
+                    skip = True
+            except Exception:
+                pass
+        if skip:
+            continue
         params = 2 * parameter.numel() if parameter.is_complex() else parameter.numel()
         total_params += params
     print(f"Total Trainable Params: {total_params}")
