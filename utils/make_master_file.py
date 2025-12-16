@@ -202,7 +202,8 @@ DATASET_DICT[name]['n_channels'] = 4
 DATASET_DICT[name]['downsample'] = (1, 1)
 
 name = 'ns3d_pdb_M1_rand'
-DATASET_DICT[name] = {'train_path': '/home/leeshu/wmm/DPOT-main/data/pdebench/ns3d_pdb_M1_rand/train', 'test_path': '/home/leeshu/wmm/DPOT-main/data/pdebench/ns3d_pdb_M1_rand/test'}
+DATASET_DICT[name] = {'train_path': '/home/leixu/wmm/DPOT-实验/DPOT-main/data/large/pdebench/ns3d_pdb_M1_rand/train', 'test_path': '/home/leixu/wmm/DPOT-实验/DPOT-main/data/large/pdebench/ns3d_pdb_M1_rand/test'}
+# DATASET_DICT[name] = {'train_path': '/home/leeshu/wmm/DPOT-main/data/pdebench/ns3d_pdb_M1_rand/train', 'test_path': '/home/leeshu/wmm/DPOT-main/data/pdebench/ns3d_pdb_M1_rand/test'}
 DATASET_DICT[name]['train_size'] = 90
 DATASET_DICT[name]['test_size'] = 10       ### default 200, maximum 1000
 DATASET_DICT[name]['scatter_storage'] = True
@@ -216,7 +217,8 @@ DATASET_DICT[name]['downsample'] = (1, 1, 1)
 
 
 name = 'ns3d_pdb_M1e-1_rand'
-DATASET_DICT[name] = {'train_path': '/home/leeshu/wmm/DPOT-main/data/pdebench/ns3d_pdb_M1e-1_rand/train', 'test_path': '/home/leeshu/wmm/DPOT-main/data/pdebench/ns3d_pdb_M1e-1_rand/test'}
+DATASET_DICT[name] = {'train_path': '/home/leixu/wmm/DPOT-实验/DPOT-main/data/large/pdebench/ns3d_pdb_M1e-1_rand/train', 'test_path': '/home/leixu/wmm/DPOT-实验/DPOT-main/data/large/pdebench/ns3d_pdb_M1e-1_rand/test'}
+# DATASET_DICT[name] = {'train_path': '/home/leeshu/wmm/DPOT-main/data/pdebench/ns3d_pdb_M1e-1_rand/train', 'test_path': '/home/leeshu/wmm/DPOT-main/data/pdebench/ns3d_pdb_M1e-1_rand/test'}
 DATASET_DICT[name]['train_size'] = 90
 DATASET_DICT[name]['test_size'] = 10       ### default 200, maximum 1000
 DATASET_DICT[name]['scatter_storage'] = True
@@ -229,7 +231,8 @@ DATASET_DICT[name]['downsample'] = (1, 1, 1)
 
 
 name = 'ns3d_pdb_M1_turb'
-DATASET_DICT[name] = {'train_path': '/home/leeshu/wmm/DPOT-main/data/pdebench/ns3d_pdb_M1_turb/train', 'test_path': '/home/leeshu/wmm/DPOT-main/data/pdebench/ns3d_pdb_M1_turb/test'}
+DATASET_DICT[name] = {'train_path': '/home/leixu/wmm/DPOT-实验/DPOT-main/data/large/pdebench/ns3d_pdb_M1_turb/train', 'test_path': '/home/leixu/wmm/DPOT-实验/DPOT-main/data/large/pdebench/ns3d_pdb_M1_turb/test'}
+# DATASET_DICT[name] = {'train_path': '/home/leeshu/wmm/DPOT-main/data/pdebench/ns3d_pdb_M1_turb/train', 'test_path': '/home/leeshu/wmm/DPOT-main/data/pdebench/ns3d_pdb_M1_turb/test'}
 DATASET_DICT[name]['train_size'] = 540
 DATASET_DICT[name]['test_size'] = 60       ### default 200, maximum 1000
 DATASET_DICT[name]['scatter_storage'] = True
