@@ -360,7 +360,19 @@ def compute_fourier_error(pred, target, iLow, iHigh, if_mean=False):
     return err_BD, fmse_low, fmse_mid, fmse_high    ## T, C, ### T, C
 
 
+class SpectralBinnedLoss(_WeightedLoss):
+    def __init__(self, iLow=4, iHigh=12, weight_mid=1.0, weight_high=0.5):
+        super(SpectralBinnedLoss, self).__init__()
+        self.iLow = iLow
+        self.iHigh = iHigh
+        self.weight_mid = weight_mid
+        self.weight_high = weight_high
 
+    def forward(self, pred, target):
+        err_BD, fmse_low, fmse_mid, fmse_high = compute_fourier_error(pred, target, self.iLow, self.iHigh)
+        loss_mid = fmse_mid.mean()
+        loss_high = fmse_high.mean()
+        return self.weight_mid * loss_mid + self.weight_high * loss_high
 
 
 if __name__ == "__main__":

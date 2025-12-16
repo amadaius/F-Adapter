@@ -31,7 +31,7 @@ from torch.optim.lr_scheduler import OneCycleLR, StepLR, LambdaLR, CosineAnneali
 from torch.utils.tensorboard import SummaryWriter
 from utils.optimizer import Adam, Lamb
 from utils.utilities import count_parameters, get_grid, load_3d_components_from_2d
-from utils.criterion import SimpleLpLoss
+from utils.criterion import SimpleLpLoss, SpectralBinnedLoss
 from utils.griddataset import MixedTemporalDataset, TemporalDataset3D
 from utils.make_master_file import DATASET_DICT
 from models.unet import UNet
@@ -220,6 +220,10 @@ parser.add_argument('--physical_size', type=float, default=1.0,
                   help='physical domain size (isotropic assumption)')
 parser.add_argument('--velocity_channels', type=int, default=3,
                   help='number of velocity components (typically 3: u,v,w). Note: ns3d_pdb_M1_turb has 5 channels')
+parser.add_argument('--use_freq_loss', type=int, default=0)
+parser.add_argument('--freq_loss_weight', type=float, default=0.1)
+parser.add_argument('--freq_ilow', type=int, default=4)
+parser.add_argument('--freq_ihigh', type=int, default=12)
 
 # 3D visualization parameters
 parser.add_argument('--enable_3d_vis', action='store_true', default=True,
@@ -1055,6 +1059,7 @@ else:
 # Main function for pretraining
 ################################################################
 myloss = SimpleLpLoss(size_average=False)
+freq_loss = SpectralBinnedLoss(iLow=args.freq_ilow, iHigh=args.freq_ihigh) if args.use_freq_loss else None
 clsloss = torch.nn.CrossEntropyLoss(reduction='sum')
 iter = 0
 for ep in tqdm(range(args.epochs), desc="Training"):
@@ -1098,8 +1103,13 @@ for ep in tqdm(range(args.epochs), desc="Training"):
         l2_full = myloss(pred, yy, mask=msk)
         train_l2_full += l2_full.item()
 
+        if freq_loss is not None and args.freq_loss_weight > 0:
+            freq_loss_val = freq_loss(pred, yy)
+        else:
+            freq_loss_val = 0.0
+
         optimizer.zero_grad()
-        total_loss = loss  # + 1.0 * cls_loss
+        total_loss = loss + args.freq_loss_weight * freq_loss_val
         total_loss.backward()
         nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
         optimizer.step()
@@ -1122,6 +1132,8 @@ for ep in tqdm(range(args.epochs), desc="Training"):
         if args.use_writer:
             writer.add_scalar("train_loss_step", loss.item()/(xx.shape[0] * yy.shape[-2] / args.T_bundle), iter)
             writer.add_scalar("train_loss_full", l2_full / xx.shape[0], iter)
+            if freq_loss is not None and args.freq_loss_weight > 0:
+                writer.add_scalar("train_freq_loss", float(freq_loss_val), iter)
 
             ## reset model
             if loss.item() > 10 * loss_previous : # or (ep > 50 and l2_full / xx.shape[0] > 0.9):
