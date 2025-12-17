@@ -1,6 +1,13 @@
 logs/
 nohup.out
+
 __pycache__/
 *.pyc
 *.sh
 utils/make_master_file.py
+
+hf_loss.md
+__pycache__/
+*.pyc
+*.sh
+
