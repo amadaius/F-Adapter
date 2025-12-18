@@ -259,13 +259,13 @@ def compute_fourier_error(pred, target, iLow, iHigh, if_mean=False):
     nb, nc, nt = idxs[0], idxs[1], idxs[-1]
 
     # RMSE
-    err_mean = torch.sqrt(torch.mean((pred.view([nb, nc, -1, nt]) - target.view([nb, nc, -1, nt])) ** 2, dim=2))
+    err_mean = torch.sqrt(torch.mean((pred.reshape(nb, nc, -1, nt) - target.reshape(nb, nc, -1, nt)) ** 2, dim=2))
     err_RMSE = torch.mean(err_mean, axis=0)
-    nrm = torch.sqrt(torch.mean(target.view([nb, nc, -1, nt]) ** 2, dim=2))
+    nrm = torch.sqrt(torch.mean(target.reshape(nb, nc, -1, nt) ** 2, dim=2))
     err_nRMSE = torch.mean(err_mean / nrm, dim=0)
 
     err_CSV = torch.sqrt(torch.mean(
-        (torch.sum(pred.view([nb, nc, -1, nt]), dim=2) - torch.sum(target.view([nb, nc, -1, nt]), dim=2)) ** 2,
+        (torch.sum(pred.reshape(nb, nc, -1, nt), dim=2) - torch.sum(target.reshape(nb, nc, -1, nt), dim=2)) ** 2,
         dim=0))
     if len(idxs) == 4:
         nx = idxs[2]
@@ -278,7 +278,7 @@ def compute_fourier_error(pred, target, iLow, iHigh, if_mean=False):
         err_CSV /= nx * ny * nz
     # worst case in all the data
     err_Max = torch.max(torch.max(
-        torch.abs(pred.view([nb, nc, -1, nt]) - target.view([nb, nc, -1, nt])), dim=2)[0], dim=0)[0]
+        torch.abs(pred.reshape(nb, nc, -1, nt) - target.reshape(nb, nc, -1, nt)), dim=2)[0], dim=0)[0]
 
     if len(idxs) == 4:  # 1D
         err_BD = (pred[:, :, 0, :] - target[:, :, 0, :]) ** 2
@@ -300,9 +300,9 @@ def compute_fourier_error(pred, target, iLow, iHigh, if_mean=False):
         err_BD_y += (pred[:, :, :, -1, :] - target[:, :, :, -1, :]) ** 2
         err_BD_z = (pred[:, :, :, :, 0] - target[:, :, :, :, 0]) ** 2
         err_BD_z += (pred[:, :, :, :, -1] - target[:, :, :, :, -1]) ** 2
-        err_BD = torch.sum(err_BD_x.view([nb, -1, nt]), dim=-2) \
-                 + torch.sum(err_BD_y.view([nb, -1, nt]), dim=-2) \
-                 + torch.sum(err_BD_z.view([nb, -1, nt]), dim=-2)
+        err_BD = torch.sum(err_BD_x.reshape(nb, -1, nt), dim=-2) \
+                 + torch.sum(err_BD_y.reshape(nb, -1, nt), dim=-2) \
+                 + torch.sum(err_BD_z.reshape(nb, -1, nt), dim=-2)
         err_BD = err_BD / (2 * nx * ny + 2 * ny * nz + 2 * nz * nx)
         err_BD = torch.mean(torch.sqrt(err_BD), dim=0)
 
