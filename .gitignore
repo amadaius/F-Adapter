@@ -10,4 +10,5 @@ hf_loss.md
 __pycache__/
 *.pyc
 *.sh
-
+monitor.log
+22.py
