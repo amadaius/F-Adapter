@@ -241,6 +241,41 @@ class Evaluator(_WeightedLoss):
 
 
 
+_SPECTRAL_BIN_CACHE = {}
+
+
+def _get_radial_bins_2d(nx2, ny2, kmax, device):
+    key = ('2d', nx2, ny2, kmax, device.type, device.index if device.index is not None else -1)
+    cached = _SPECTRAL_BIN_CACHE.get(key, None)
+    if cached is not None:
+        return cached
+
+    ii = torch.arange(nx2, device=device, dtype=torch.float32).view(nx2, 1)
+    jj = torch.arange(ny2, device=device, dtype=torch.float32).view(1, ny2)
+    bin_idx = torch.floor(torch.sqrt(ii * ii + jj * jj)).to(torch.long)
+    mask_flat = (bin_idx < kmax).reshape(-1)
+    bin_idx_flat = bin_idx.reshape(-1)[mask_flat]
+
+    _SPECTRAL_BIN_CACHE[key] = (bin_idx_flat, mask_flat)
+    return bin_idx_flat, mask_flat
+
+
+def _get_radial_bins_3d(nx2, ny2, nz2, kmax, device):
+    key = ('3d', nx2, ny2, nz2, kmax, device.type, device.index if device.index is not None else -1)
+    cached = _SPECTRAL_BIN_CACHE.get(key, None)
+    if cached is not None:
+        return cached
+
+    ii = torch.arange(nx2, device=device, dtype=torch.float32)
+    jj = torch.arange(ny2, device=device, dtype=torch.float32)
+    kk = torch.arange(nz2, device=device, dtype=torch.float32)
+    I, J, K = torch.meshgrid(ii, jj, kk)
+    bin_idx = torch.floor(torch.sqrt(I * I + J * J + K * K)).to(torch.long)
+    mask_flat = (bin_idx < kmax).reshape(-1)
+    bin_idx_flat = bin_idx.reshape(-1)[mask_flat]
+
+    _SPECTRAL_BIN_CACHE[key] = (bin_idx_flat, mask_flat)
+    return bin_idx_flat, mask_flat
 
 
 def compute_fourier_error(pred, target, iLow, iHigh, if_mean=False):
@@ -310,33 +345,44 @@ def compute_fourier_error(pred, target, iLow, iHigh, if_mean=False):
         nx = idxs[2]
         pred_F = torch.fft.rfft(pred, dim=2)
         target_F = torch.fft.rfft(target, dim=2)
-        _err_F = torch.sqrt(torch.mean(torch.abs(pred_F - target_F) ** 2, axis=0)) / nx   # Lx, Ly, Lz=1
-    if len(idxs) == 5:  # 2D
+        _err_F = torch.sqrt(torch.mean(torch.abs(pred_F - target_F) ** 2, axis=0)) / nx
+    elif len(idxs) == 5:  # 2D
         pred_F = torch.fft.fftn(pred, dim=[2, 3])
         target_F = torch.fft.fftn(target, dim=[2, 3])
         nx, ny = idxs[2:4]
-        _err_F = torch.abs(pred_F - target_F) ** 2
-        err_F = torch.zeros([nb, nc, min(nx // 2, ny // 2), nt]).to(pred.device)
-        for i in range(nx // 2):
-            for j in range(ny // 2):
-                it = mt.floor(mt.sqrt(i ** 2 + j ** 2))
-                if it > min(nx // 2, ny // 2) - 1:
-                    continue
-                err_F[:, :, it] += _err_F[:, :, i, j]
+        err_sq = torch.abs(pred_F - target_F) ** 2
+
+        nx2, ny2 = nx // 2, ny // 2
+        kmax = min(nx2, ny2)
+        bin_idx_flat, mask_flat = _get_radial_bins_2d(nx2, ny2, kmax, pred.device)
+
+        err_region = err_sq[:, :, :nx2, :ny2, :]
+        src = err_region.permute(0, 1, 4, 2, 3).reshape(nb, nc, nt, -1)
+        src = src[..., mask_flat]
+
+        out = torch.zeros(nb, nc, nt, kmax, device=pred.device, dtype=src.dtype)
+        out.index_add_(3, bin_idx_flat, src)
+
+        err_F = out.permute(0, 1, 3, 2)
         _err_F = torch.sqrt(torch.mean(err_F, axis=0)) / (nx * ny)
     elif len(idxs) == 6:  # 3D
         pred_F = torch.fft.fftn(pred, dim=[2, 3, 4])
         target_F = torch.fft.fftn(target, dim=[2, 3, 4])
         nx, ny, nz = idxs[2:5]
-        _err_F = torch.abs(pred_F - target_F) ** 2
-        err_F = torch.zeros([nb, nc, min(nx // 2, ny // 2, nz // 2), nt]).to(pred.device)
-        for i in range(nx // 2):
-            for j in range(ny // 2):
-                for k in range(nz // 2):
-                    it = mt.floor(mt.sqrt(i ** 2 + j ** 2 + k ** 2))
-                    if it > min(nx // 2, ny // 2, nz // 2) - 1:
-                        continue
-                    err_F[:, :, it] += _err_F[:, :, i, j, k]
+        err_sq = torch.abs(pred_F - target_F) ** 2
+
+        nx2, ny2, nz2 = nx // 2, ny // 2, nz // 2
+        kmax = min(nx2, ny2, nz2)
+        bin_idx_flat, mask_flat = _get_radial_bins_3d(nx2, ny2, nz2, kmax, pred.device)
+
+        err_region = err_sq[:, :, :nx2, :ny2, :nz2, :]
+        src = err_region.permute(0, 1, 5, 2, 3, 4).reshape(nb, nc, nt, -1)
+        src = src[..., mask_flat]
+
+        out = torch.zeros(nb, nc, nt, kmax, device=pred.device, dtype=src.dtype)
+        out.index_add_(3, bin_idx_flat, src)
+
+        err_F = out.permute(0, 1, 3, 2)
         _err_F = torch.sqrt(torch.mean(err_F, axis=0)) / (nx * ny * nz)
 
     fmse_low = torch.mean(_err_F[:, :iLow], dim=1).T  # low freq
