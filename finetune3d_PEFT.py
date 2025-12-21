@@ -222,6 +222,10 @@ parser.add_argument('--velocity_channels', type=int, default=3,
                   help='number of velocity components (typically 3: u,v,w). Note: ns3d_pdb_M1_turb has 5 channels')
 parser.add_argument('--use_freq_loss', type=int, default=0)
 parser.add_argument('--freq_loss_weight', type=float, default=0.1)
+parser.add_argument('--freq_loss_start_epoch', type=int, default=1,
+                  help='start applying frequency loss at this epoch (1-based) when --use_freq_loss=1')
+parser.add_argument('--freq_loss_ramp_epochs', type=int, default=0,
+                  help='linearly ramp frequency loss weight for this many epochs after start (0 disables ramp)')
 parser.add_argument('--freq_ilow', type=int, default=4)
 parser.add_argument('--freq_ihigh', type=int, default=12)
 
@@ -1103,13 +1107,25 @@ for ep in tqdm(range(args.epochs), desc="Training"):
         l2_full = myloss(pred, yy, mask=msk)
         train_l2_full += l2_full.item()
 
+        freq_loss_val = 0.0
+        freq_weight = 0.0
         if freq_loss is not None and args.freq_loss_weight > 0:
-            freq_loss_val = freq_loss(pred, yy)
-        else:
-            freq_loss_val = 0.0
+            freq_start = max(1, int(args.freq_loss_start_epoch))
+            if (ep + 1) >= freq_start:
+                if args.freq_loss_ramp_epochs and args.freq_loss_ramp_epochs > 0:
+                    ramp_pos = (ep + 1) - freq_start + 1
+                    ramp = ramp_pos / float(args.freq_loss_ramp_epochs)
+                    if ramp < 0.0:
+                        ramp = 0.0
+                    elif ramp > 1.0:
+                        ramp = 1.0
+                    freq_weight = args.freq_loss_weight * ramp
+                else:
+                    freq_weight = args.freq_loss_weight
+                freq_loss_val = freq_loss(pred, yy)
 
         optimizer.zero_grad()
-        total_loss = loss + args.freq_loss_weight * freq_loss_val
+        total_loss = loss + freq_weight * freq_loss_val
         total_loss.backward()
         nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
         optimizer.step()
@@ -1132,7 +1148,8 @@ for ep in tqdm(range(args.epochs), desc="Training"):
         if args.use_writer:
             writer.add_scalar("train_loss_step", loss.item()/(xx.shape[0] * yy.shape[-2] / args.T_bundle), iter)
             writer.add_scalar("train_loss_full", l2_full / xx.shape[0], iter)
-            if freq_loss is not None and args.freq_loss_weight > 0:
+            if freq_loss is not None:
+                writer.add_scalar("train_freq_loss_weight", float(freq_weight), iter)
                 writer.add_scalar("train_freq_loss", float(freq_loss_val), iter)
 
             ## reset model
